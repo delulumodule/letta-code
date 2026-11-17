@@ -43,6 +43,11 @@ import {
 } from "@/channels/runtime-deps";
 import { listChannelAccountSnapshots } from "@/channels/service";
 import { normalizeTelegramChatId } from "@/channels/telegram/chat-id";
+import {
+  getTelegramGroupTrigger,
+  resolveTelegramGroupTrigger,
+  setTelegramGroupTrigger,
+} from "@/channels/telegram/group-trigger";
 import type {
   ChannelRoute,
   SlackChannelAccount,
@@ -58,11 +63,23 @@ Usage:
   letta channels install <channel>            Install channel runtime dependencies
   letta channels configure <channel>          Set up a channel (interactive wizard)
   letta channels status                       Show channel config, routing, pairing state
+  letta channels group-trigger [options]       Read or change a Telegram group reply trigger
   letta channels route list [--channel <ch>]  Show routing table
   letta channels route add [options]          Add a route
   letta channels route remove [options]       Remove a route
   letta channels bind [options]               Bind a Slack app to an agent
   letta channels pair [options]               Approve pairing + bind to agent
+
+Telegram group trigger options:
+  --account-id <id>      Select an account when more than one is configured
+  --chat-id=-100...      Limit the rule to one group
+  --thread-id <id>       Limit the rule to one topic in that group
+  --pattern <regex>      Require a Unicode case-insensitive match or a reply to the bot
+  --allow-all            Deliver messages from allowed senders without a mention
+  --inherit              Remove this rule and use the broader scope
+  Omit the mode flags to show the stored and effective rules.
+  Topic rules override group rules, and group rules override the account default.
+  The listener reads changes on the next group message.
 
 Bind options (Slack only):
   --channel slack        Required
@@ -137,6 +154,10 @@ const CHANNELS_OPTIONS = {
   help: { type: "boolean", short: "h" },
   channel: { type: "string" },
   "account-id": { type: "string" },
+  pattern: { type: "string" },
+  "thread-id": { type: "string" },
+  "allow-all": { type: "boolean" },
+  inherit: { type: "boolean" },
   "chat-id": { type: "string" },
   agent: { type: "string" },
   conversation: { type: "string" },
@@ -581,6 +602,65 @@ function handleBind(
   return 0;
 }
 
+function handleGroupTrigger(
+  values: ReturnType<typeof parseChannelsArgs>["values"],
+): number {
+  try {
+    const accountId = resolveSelectedAccountId(
+      "telegram",
+      values["account-id"],
+    );
+    const chatId =
+      values["chat-id"] === undefined
+        ? undefined
+        : normalizeTelegramChatId(values["chat-id"]);
+    const threadId = values["thread-id"]?.trim();
+    if (
+      threadId !== undefined &&
+      (!chatId || !/^[1-9][0-9]*$/.test(threadId))
+    ) {
+      throw new Error(
+        "--thread-id requires --chat-id and a positive numeric topic ID",
+      );
+    }
+
+    const hasPattern = values.pattern !== undefined;
+    if (
+      [hasPattern, values["allow-all"], values.inherit].filter(Boolean).length >
+      1
+    ) {
+      throw new Error("Choose one of --pattern, --allow-all, or --inherit");
+    }
+    const scope = { accountId, chatId, threadId };
+    if (values.pattern !== undefined) {
+      setTelegramGroupTrigger(scope, {
+        mode: "pattern",
+        pattern: values.pattern,
+      });
+    } else if (values["allow-all"]) {
+      setTelegramGroupTrigger(scope, { mode: "all" });
+    } else if (values.inherit) {
+      setTelegramGroupTrigger(scope, undefined);
+    }
+
+    console.log(
+      JSON.stringify(
+        {
+          ...scope,
+          rule: getTelegramGroupTrigger(scope) ?? null,
+          effectiveRule: resolveTelegramGroupTrigger(scope) ?? null,
+        },
+        null,
+        2,
+      ),
+    );
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
 // ── Router ──────────────────────────────────────────────────────────
 
 export async function runChannelsSubcommand(argv: string[]): Promise<number> {
@@ -614,6 +694,8 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
     }
     case "status":
       return handleStatus();
+    case "group-trigger":
+      return handleGroupTrigger(values);
     case "route": {
       const routeAction = rest[0];
       switch (routeAction) {
@@ -640,7 +722,7 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
         return 0;
       }
       console.error(
-        `Unknown channels action: "${action}". Use: install, configure, status, route, bind, pair`,
+        `Unknown channels action: "${action}". Use: install, configure, status, group-trigger, route, bind, pair`,
       );
       return 1;
   }

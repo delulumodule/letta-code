@@ -1,4 +1,6 @@
 import { expect, mock, test } from "bun:test";
+import assert from "node:assert/strict";
+import { setTelegramGroupTrigger } from "@/channels/telegram/group-trigger";
 import type { InboundChannelMessage } from "@/channels/types";
 import { buildChannelNotificationXml } from "@/channels/xml";
 import {
@@ -133,6 +135,96 @@ test("telegram delivers a structured rich message without legacy text", async ()
       ].join("\n\n"),
     }),
   );
+});
+
+test("Telegram topic triggers update live and leave neighboring topics and DMs alone", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const received: InboundChannelMessage[] = [];
+  adapter.onMessage = async (message) => {
+    received.push(message);
+  };
+  await adapter.start();
+
+  const accountId = telegramAccountDefaults.accountId;
+  const group = { accountId, chatId: "-100123" };
+  const topic = { ...group, threadId: "42" };
+  setTelegramGroupTrigger({ accountId }, { mode: "pattern", pattern: "misa" });
+  setTelegramGroupTrigger(group, { mode: "pattern", pattern: "group keyword" });
+  setTelegramGroupTrigger(topic, { mode: "all" });
+  expect(() =>
+    setTelegramGroupTrigger(topic, { mode: "pattern", pattern: "[" }),
+  ).toThrow();
+
+  const base = {
+    chat: { id: -100123, type: "supergroup" },
+    from: { id: 456 },
+    text: "ambient",
+    date: 1_736_380_800,
+  };
+  const bot = FakeBot.instances[0];
+  assert(bot);
+  await bot.emit("message", {
+    message: { ...base, message_thread_id: 42, message_id: 80 },
+  });
+  await bot.emit("message", {
+    message: { ...base, message_thread_id: 43, message_id: 81 },
+  });
+  await bot.emit("message", {
+    message: {
+      ...base,
+      message_thread_id: 43,
+      message_id: 82,
+      text: "GROUP keyword",
+    },
+  });
+  await bot.emit("message", {
+    message: {
+      ...base,
+      chat: { id: -100124, type: "supergroup" },
+      message_id: 83,
+      text: "MISA",
+    },
+  });
+  await bot.emit("message", {
+    message: {
+      ...base,
+      message_thread_id: 43,
+      message_id: 84,
+      reply_to_message: {
+        ...base,
+        message_id: 70,
+        from: { id: bot.botInfo.id },
+      },
+    },
+  });
+  await bot.emit("message", {
+    message: {
+      ...base,
+      chat: { id: 456, type: "private" },
+      message_id: 85,
+    },
+  });
+  setTelegramGroupTrigger(topic, undefined);
+  await bot.emit("message", {
+    message: { ...base, message_thread_id: 42, message_id: 86 },
+  });
+
+  expect(
+    received.map(({ messageId, isOpenChannel }) => [messageId, isOpenChannel]),
+  ).toEqual([
+    ["80", true],
+    ["82", true],
+    ["83", true],
+    ["84", true],
+    ["85", undefined],
+  ]);
 });
 
 test("telegram adapter preserves group topic metadata on inbound messages", async () => {

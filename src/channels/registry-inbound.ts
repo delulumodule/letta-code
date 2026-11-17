@@ -186,7 +186,11 @@ export function createChannelInboundRouter(deps: {
       isTelegramChannelAccount(config) &&
       msg.chatType === "channel"
     ) {
-      if ((config.groupMode ?? "open") === "mention-only" && !msg.isMention) {
+      if (
+        (config.groupMode ?? "open") === "mention-only" &&
+        !msg.isMention &&
+        !msg.isOpenChannel
+      ) {
         return;
       }
       const telegramResult = await deps.routes.ensureTelegramRoute(

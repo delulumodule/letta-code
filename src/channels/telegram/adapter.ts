@@ -32,6 +32,10 @@ import {
   buildTelegramDebounceKey,
   resolveTelegramInboundDebounceMs,
 } from "./debounce";
+import {
+  matchesTelegramGroupTrigger,
+  resolveTelegramGroupTrigger,
+} from "./group-trigger";
 import { diffTelegramReactionUpdate } from "./ingress";
 import type {
   BufferedMediaGroup,
@@ -208,6 +212,24 @@ export function createTelegramAdapter(
       return;
     }
 
+    const chatId = String(primaryMessage.chat.id);
+    const chatType = getTelegramChatType(primaryMessage.chat);
+    const threadId = getTelegramMessageThreadId(primaryMessage);
+    const trigger =
+      chatType === "channel"
+        ? resolveTelegramGroupTrigger({
+            accountId: config.accountId,
+            chatId,
+            threadId: threadId ?? undefined,
+          })
+        : undefined;
+    if (
+      trigger &&
+      !matchesTelegramGroupTrigger(trigger, messages, telegramBot.botInfo?.id)
+    ) {
+      return;
+    }
+
     const mention = detectTelegramBotMention(
       primaryMessage,
       telegramBot.botInfo?.username,
@@ -229,14 +251,15 @@ export function createTelegramAdapter(
     const inbound: InboundChannelMessage = {
       channel: "telegram",
       accountId: config.accountId,
-      chatId: String(primaryMessage.chat.id),
+      chatId,
       senderId: String(primaryMessage.from.id),
       senderName: getTelegramSenderName(primaryMessage),
       text,
       isMention: mention.isMention,
       timestamp: primaryMessage.date * 1000,
       messageId: String(primaryMessage.message_id),
-      chatType: getTelegramChatType(primaryMessage.chat),
+      chatType,
+      ...(trigger ? { isOpenChannel: true } : {}),
       attachments: attachments.length > 0 ? attachments : undefined,
       replyContext: getTelegramReplyContext(primaryMessage),
       raw: messages.length === 1 ? primaryMessage : messages,
@@ -245,7 +268,6 @@ export function createTelegramAdapter(
     if (chatLabel) {
       inbound.chatLabel = chatLabel;
     }
-    const threadId = getTelegramMessageThreadId(primaryMessage);
     if (threadId) {
       inbound.threadId = threadId;
     }

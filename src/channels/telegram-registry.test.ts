@@ -174,44 +174,47 @@ describe("telegram channel registry", () => {
     expect(deliveries).toHaveLength(0);
   });
 
-  test("mention-only Telegram groups route explicit mentions", async () => {
-    __testOverrideLoadChannelAccounts(() => [
-      {
-        channel: "telegram",
-        accountId: "telegram-bot",
-        enabled: true,
-        token: "telegram-token",
-        dmPolicy: "pairing",
-        allowedUsers: [],
-        groupMode: "mention-only",
-        binding: { agentId: "agent-1", conversationId: null },
-        createdAt: "2026-04-11T00:00:00.000Z",
-        updatedAt: "2026-04-11T00:00:00.000Z",
-      },
-    ]);
+  test.each([{ isMention: true }, { isMention: false, isOpenChannel: true }])(
+    "mention-only Telegram groups route authorized triggers %p",
+    async (trigger) => {
+      __testOverrideLoadChannelAccounts(() => [
+        {
+          channel: "telegram",
+          accountId: "telegram-bot",
+          enabled: true,
+          token: "telegram-token",
+          dmPolicy: "pairing",
+          allowedUsers: [],
+          groupMode: "mention-only",
+          binding: { agentId: "agent-1", conversationId: null },
+          createdAt: "2026-04-11T00:00:00.000Z",
+          updatedAt: "2026-04-11T00:00:00.000Z",
+        },
+      ]);
 
-    const { ChannelRegistry } = await import("@/channels/registry");
-    const registry = new ChannelRegistry();
-    const adapter = createAdapter();
-    registry.registerAdapter(adapter);
+      const { ChannelRegistry } = await import("@/channels/registry");
+      const registry = new ChannelRegistry();
+      const adapter = createAdapter();
+      registry.registerAdapter(adapter);
 
-    const deliveries: unknown[] = [];
-    registry.setMessageHandler((delivery) => {
-      deliveries.push(delivery);
-    });
-    registry.setReady();
+      const deliveries: unknown[] = [];
+      registry.setMessageHandler((delivery) => {
+        deliveries.push(delivery);
+      });
+      registry.setReady();
 
-    await adapter.onMessage?.(createInboundMessage({ isMention: true }));
+      await adapter.onMessage?.(createInboundMessage(trigger));
 
-    expect(createConversation).toHaveBeenCalledTimes(1);
-    expect(getRoute("telegram", "-100123", "telegram-bot", "42")).toMatchObject(
-      {
+      expect(createConversation).toHaveBeenCalledTimes(1);
+      expect(
+        getRoute("telegram", "-100123", "telegram-bot", "42"),
+      ).toMatchObject({
         accountId: "telegram-bot",
         agentId: "agent-1",
-      },
-    );
-    expect(deliveries).toHaveLength(1);
-  });
+      });
+      expect(deliveries).toHaveLength(1);
+    },
+  );
 
   afterAll(() => {
     mock.restore();

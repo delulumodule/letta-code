@@ -175,6 +175,22 @@ Only set `LETTA_BASE_URL` for a separate self-hosted server. For example,
 a server running at that URL. Do not set a dummy `LETTA_BASE_URL` for
 `--backend local`.
 
+## Telegram group triggers
+
+An agent can inspect or change its Telegram trigger using `letta channels group-trigger`. The rules live in the account's local Letta config directory, and the listener reads changes on the next group message.
+
+```bash
+letta channels group-trigger --pattern 'wake word'
+letta channels group-trigger --chat-id=-1001234567890 --thread-id 42 --allow-all
+letta channels group-trigger --chat-id=-1001234567890 --thread-id 42 --inherit
+```
+
+A topic rule overrides the group rule, which overrides the account default.
+With `--pattern`, a Unicode case-insensitive regex match or a reply to the
+bot triggers delivery. With `--allow-all`, messages can trigger delivery
+without a mention. Telegram bot privacy and sender access rules still apply.
+Use `--account-id` if multiple accounts are configured.
+
 ## Channel slash commands
 
 Typed slash commands are handled before normal channel ingress so operational
