@@ -74,6 +74,7 @@ const WATCH_REFRESH_ERROR_NOTIFY_AFTER_MS = 5 * 60_000;
 const WATCH_FRESH_SNAPSHOT_NOTIFY_AFTER_MS = 30 * 60_000;
 
 interface WatchPullRequestArgs {
+  toolCallId?: string;
   resume?: string;
   url?: string;
   notify_on?: PullRequestEventKind[];
