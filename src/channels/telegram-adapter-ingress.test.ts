@@ -54,6 +54,87 @@ test("telegram adapter forwards plain text messages through onMessage", async ()
   });
 });
 
+test("telegram delivers a structured rich message without legacy text", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+  await adapter.start();
+
+  await FakeBot.instances[0]?.emit("message", {
+    message: {
+      chat: { id: 123, type: "private" },
+      from: { id: 456, username: "alice" },
+      date: 1_736_380_800,
+      message_id: 79,
+      rich_message: {
+        blocks: [
+          { type: "heading", size: 2, text: "Comparison" },
+          {
+            type: "table",
+            cells: [
+              [{ text: "Model" }, { text: "Price" }],
+              [
+                {
+                  text: {
+                    type: "url",
+                    text: "Charger",
+                    url: "https://example.com/item",
+                  },
+                },
+                { text: ["€", { type: "bold", text: "29" }] },
+              ],
+            ],
+          },
+          {
+            type: "details",
+            summary: "Notes",
+            blocks: [
+              {
+                type: "list",
+                items: [
+                  {
+                    label: "1.",
+                    blocks: [{ type: "paragraph", text: "USB-C" }],
+                  },
+                  {
+                    label: "2.",
+                    blocks: [
+                      { type: "paragraph", text: "Compact" },
+                      { type: "paragraph", text: "Fits in a pocket" },
+                    ],
+                  },
+                ],
+              },
+              {
+                type: "photo",
+                caption: { text: "Side view", credit: "Example" },
+              },
+            ],
+          },
+        ],
+      },
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      messageId: "79",
+      text: [
+        "Comparison",
+        "Model | Price\nCharger (https://example.com/item) | €29",
+        "Notes\n1. USB-C\n2. Compact\n   Fits in a pocket\n\nSide view\nExample",
+      ].join("\n\n"),
+    }),
+  );
+});
+
 test("telegram adapter preserves group topic metadata on inbound messages", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,

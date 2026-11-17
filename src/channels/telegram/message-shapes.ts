@@ -8,6 +8,8 @@
  * that do not install the Telegram runtime.
  */
 
+import { flattenTelegramRichBlocks } from "./rich-text";
+
 export type TelegramLikeMessage = {
   media_group_id?: string;
   message_thread_id?: number | string;
@@ -15,6 +17,7 @@ export type TelegramLikeMessage = {
   date: number;
   text?: string;
   caption?: string;
+  rich_message?: { blocks: unknown[] };
   entities?: Array<{
     type?: string;
     offset?: number;
@@ -173,13 +176,13 @@ export type TelegramReactionUpdate = {
 export function extractTelegramMessageText(
   message: TelegramLikeMessage,
 ): string {
-  if (typeof message.text === "string") {
+  if (typeof message.text === "string" && message.text.trim()) {
     return message.text;
   }
-  if (typeof message.caption === "string") {
+  if (typeof message.caption === "string" && message.caption.trim()) {
     return message.caption;
   }
-  return "";
+  return flattenTelegramRichBlocks(message.rich_message?.blocks);
 }
 
 export function getTelegramSenderName(

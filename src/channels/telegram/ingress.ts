@@ -8,7 +8,6 @@
  */
 
 import type { ChannelReplyContext } from "@/channels/types";
-import { isRecord } from "@/utils/type-guards";
 import {
   extractTelegramMessageText,
   getTelegramSenderName,
@@ -17,6 +16,7 @@ import {
   type TelegramReactionType,
   type TelegramReactionUpdate,
 } from "./message-shapes";
+import { flattenTelegramRichText } from "./rich-text";
 
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -158,32 +158,6 @@ function getTelegramQuoteText(quote: TelegramLikeMessage["quote"]): string {
     ? quote.rich_texts.map(flattenTelegramRichText).join("\n").trim()
     : "";
   return richText || (typeof quote.text === "string" ? quote.text.trim() : "");
-}
-
-function flattenTelegramRichText(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(flattenTelegramRichText).join("");
-  }
-  if (!isRecord(value)) {
-    return "";
-  }
-
-  if (
-    value.type === "custom_emoji" &&
-    typeof value.alternative_text === "string"
-  ) {
-    return value.alternative_text;
-  }
-  if (
-    value.type === "mathematical_expression" &&
-    typeof value.expression === "string"
-  ) {
-    return value.expression;
-  }
-  return flattenTelegramRichText(value.text);
 }
 
 export function getTelegramReactionToken(
