@@ -113,6 +113,7 @@ describe("MessageChannel Telegram", () => {
       accountId: "account-1",
       chatId: "7952253975",
       text: "hello <b>world</b> &amp; team",
+      richMessage: { markdown: "hello **world** & team" },
       replyToMessageId: "42",
       threadId: null,
       mediaPath: undefined,
@@ -410,10 +411,12 @@ describe("MessageChannel Telegram", () => {
     );
   });
 
-  test("keeps Telegram channel sends plain unless send-rich is explicit", async () => {
+  test("defaults Telegram group topic sends to rich Markdown", async () => {
     const registry = new ChannelRegistry();
 
-    const sendMessage = mock(async () => ({ messageId: "telegram-plain-1" }));
+    const sendMessage = mock(async () => ({
+      messageId: "telegram-group-rich",
+    }));
 
     const adapter: ChannelAdapter = {
       id: "telegram:account-1",
@@ -428,6 +431,7 @@ describe("MessageChannel Telegram", () => {
     };
 
     registry.registerAdapter(adapter);
+    upsertTelegramTestAccount({ richPrivateChatDefault: false });
 
     setRouteInMemory("telegram", {
       accountId: "account-1",
@@ -445,7 +449,7 @@ describe("MessageChannel Telegram", () => {
       action: "send",
       channel: "telegram",
       chat_id: "-1003904563283",
-      message: "# Plain channel fallback",
+      message: "# Group topic",
       parentScope: {
         agentId: "agent-1",
         conversationId: "default",
@@ -454,8 +458,9 @@ describe("MessageChannel Telegram", () => {
 
     expect(result).toContain("Message sent to telegram");
     expect(sendMessage).toHaveBeenCalledWith(
-      expect.not.objectContaining({
-        richMessage: expect.anything(),
+      expect.objectContaining({
+        threadId: "42",
+        richMessage: { markdown: "# Group topic" },
       }),
     );
   });
@@ -730,6 +735,7 @@ describe("MessageChannel Telegram", () => {
       accountId: "new-account",
       chatId: "7952253975",
       text: "hello private topic",
+      richMessage: { markdown: "hello private topic" },
       replyToMessageId: undefined,
       threadId: "175380",
       mediaPath: undefined,

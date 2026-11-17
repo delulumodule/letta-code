@@ -24,8 +24,8 @@ function shouldSendTelegramRichMessage(params: {
   }
   return (
     params.request.action === "send" &&
-    params.route.chatType === "direct" &&
-    params.richPrivateChatDefaultEnabled(params.route) &&
+    (params.route.chatType === "channel" ||
+      params.richPrivateChatDefaultEnabled(params.route)) &&
     !params.request.mediaPath?.trim()
   );
 }

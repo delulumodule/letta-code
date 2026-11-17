@@ -216,31 +216,33 @@ describe("Telegram rich draft streamer", () => {
     expect(sendRichMessageDraft).not.toHaveBeenCalled();
   });
 
-  test("does not stream plain send args from Telegram channel routes", async () => {
-    upsertTelegramAccount(true);
-    const { sendRichMessageDraft } = registerTelegramAdapter();
+  test.each(["send", "send-rich"])(
+    "does not stream %s drafts from Telegram channel routes",
+    async (action) => {
+      upsertTelegramAccount(true);
+      const { sendRichMessageDraft } = registerTelegramAdapter();
 
-    const streamer = createChannelRichDraftStreamer({
-      batchId: "batch-1",
-      sources: [telegramSource({ chatType: "channel", threadId: "42" })],
-      debounceMs: 0,
-    });
+      const streamer = createChannelRichDraftStreamer({
+        batchId: "batch-1",
+        sources: [telegramSource({ chatType: "channel", threadId: "42" })],
+        debounceMs: 0,
+      });
 
-    streamer?.handleChunk({
-      message_type: "approval_request_message",
-      tool_calls: [
-        {
-          tool_call_id: "call-1",
-          name: "MessageChannel",
-          arguments:
-            '{"action":"send","channel":"telegram","chat_id":"telegram:chat-12345","accountId":"acct-telegram","threadId":"42","message":"# Channel plain',
-        },
-      ],
-    } as never);
-    await streamer?.flushPending();
+      streamer?.handleChunk({
+        message_type: "approval_request_message",
+        tool_calls: [
+          {
+            tool_call_id: "call-1",
+            name: "MessageChannel",
+            arguments: `{"action":"${action}","channel":"telegram","chat_id":"telegram:chat-12345","accountId":"acct-telegram","threadId":"42","message":"# Channel final`,
+          },
+        ],
+      } as never);
+      await streamer?.flushPending();
 
-    expect(sendRichMessageDraft).not.toHaveBeenCalled();
-  });
+      expect(sendRichMessageDraft).not.toHaveBeenCalled();
+    },
+  );
 
   test("sends the first visible draft immediately even when updates are debounced", async () => {
     upsertTelegramAccount(true);

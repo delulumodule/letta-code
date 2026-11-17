@@ -114,6 +114,7 @@ function resolveSingleChannelDraftSource(
     (source): source is ChannelDraftSource =>
       typeof source.accountId === "string" &&
       source.accountId.trim().length > 0 &&
+      (source.channel !== "telegram" || source.chatType === "direct") &&
       getRichDraftStreamingPolicy(
         getChannelAccount(source.channel, source.accountId.trim()),
       ) !== null,
