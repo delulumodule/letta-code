@@ -18,6 +18,7 @@ import type {
   ConversationResumeTailOptions,
   RunMessageStreamBody,
 } from "@/backend/backend";
+import { LocalConversationOwnership } from "@/backend/local/conversation-ownership";
 import { localConversationKey } from "@/backend/local/local-conversation-key";
 import {
   LocalBackendNotFoundError,
@@ -29,13 +30,18 @@ import type { LocalAgentRecord } from "@/backend/local/local-types";
 import { TURN_DID_NOT_COMPLETE } from "@/constants";
 import { isRecord } from "@/utils/type-guards";
 import {
+  localErrorChunk,
+  localStopReasonChunk,
+  localStreamProtocolError,
+  type RunErrorMetadata,
+  runErrorInfo,
+  runStopReason,
+} from "./headless-run-events";
+import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
 } from "./headless-turn-executor";
-import {
-  type LocalProviderErrorInfo,
-  normalizeLocalProviderError,
-} from "./local-provider-errors";
+import { normalizeLocalProviderError } from "./local-provider-errors";
 
 function createPage<T>(items: T[]) {
   return {
@@ -45,45 +51,6 @@ function createPage<T>(items: T[]) {
 
 function timestampForRun(sequence: number): string {
   return new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString();
-}
-
-function runStopReason(chunk: LettaStreamingResponse): string | undefined {
-  if (chunk.message_type !== "stop_reason") return undefined;
-  const stopReason = (chunk as { stop_reason?: unknown }).stop_reason;
-  return typeof stopReason === "string" ? stopReason : undefined;
-}
-
-type RunErrorMetadata = Pick<
-  LocalProviderErrorInfo,
-  "message" | "detail" | "error_type" | "retryable"
-> & { run_id?: string };
-
-function runErrorInfo(
-  chunk: LettaStreamingResponse,
-): RunErrorMetadata | undefined {
-  if (chunk.message_type !== "error_message") return undefined;
-  const record = chunk as {
-    message?: unknown;
-    detail?: unknown;
-    error_type?: unknown;
-    retryable?: unknown;
-  };
-  const message = typeof record.message === "string" ? record.message : "";
-  const detail =
-    typeof record.detail === "string"
-      ? record.detail
-      : message || "Unknown local backend error";
-  const errorType =
-    record.error_type === "llm_error" ||
-    record.error_type === "local_backend_error"
-      ? record.error_type
-      : "local_backend_error";
-  return {
-    message: message || detail,
-    detail,
-    error_type: errorType,
-    retryable: record.retryable === true,
-  };
 }
 
 function attachRunId(
@@ -103,32 +70,6 @@ function cloneStreamingChunk(
   chunk: LettaStreamingResponse,
 ): LettaStreamingResponse {
   return JSON.parse(JSON.stringify(chunk)) as LettaStreamingResponse;
-}
-
-function localStreamProtocolError(message: string): RunErrorMetadata {
-  return {
-    message,
-    detail: message,
-    error_type: "local_backend_error",
-    retryable: false,
-  };
-}
-
-function localErrorChunk(info: RunErrorMetadata): LettaStreamingResponse {
-  return {
-    message_type: "error_message",
-    message: info.message,
-    detail: info.detail,
-    error_type: info.error_type,
-    retryable: info.retryable,
-  } as unknown as LettaStreamingResponse;
-}
-
-function localStopReasonChunk(stopReason: string): LettaStreamingResponse {
-  return {
-    message_type: "stop_reason",
-    stop_reason: stopReason,
-  } as LettaStreamingResponse;
 }
 
 function effectiveAgentForConversation(
@@ -197,6 +138,7 @@ export const HEADLESS_BACKEND_CAPABILITIES: BackendCapabilities = {
 
 export class HeadlessBackend implements Backend {
   readonly capabilities = HEADLESS_BACKEND_CAPABILITIES;
+  readonly localConversations: LocalConversationOwnership;
 
   protected readonly store: LocalStore;
   private readonly executor: HeadlessTurnExecutor;
@@ -236,6 +178,9 @@ export class HeadlessBackend implements Backend {
       ...storeOptions,
     });
     this.executor = executor;
+    this.localConversations = new LocalConversationOwnership(
+      storeOptions.storageDir,
+    );
   }
 
   async retrieveAgent(agentId: string): Promise<AgentState> {
@@ -394,33 +339,37 @@ export class HeadlessBackend implements Backend {
       ) ??
       this.findActiveRunByAgentId(conversationIdOrAgentId);
     const run = runId ? this.runs.get(runId) : undefined;
-    if (run?.conversation_id && run.agent_id) {
-      this.store.settleInterruptedToolCalls(run.conversation_id, {
-        agentId: run.agent_id,
-      });
-    } else {
-      this.store.settleInterruptedToolCalls(conversationIdOrAgentId);
+    const scope = run?.conversation_id
+      ? { conversationId: run.conversation_id, agentId: run.agent_id }
+      : this.store.toolSettlementTargets(conversationIdOrAgentId)[0];
+    if (!scope) {
+      return { status: "cancelled" } as never;
     }
-    if (runId) {
-      const controller = this.runControllerByRunId.get(runId);
-      // Captured before completeRun clears it: preemption must still reach a
-      // turn parked in hung startup.
-      const preemptStartup = this.runStartupPreemptByRunId.get(runId);
-      this.recordRunChunk(runId, {
-        message_type: "stop_reason",
-        stop_reason: "cancelled",
-      } as LettaStreamingResponse);
-      this.completeRun(runId, "cancelled");
-      controller?.abort();
-      preemptStartup?.();
-    }
-    return { status: "cancelled" } as never;
+    return this.localConversations.cancel(
+      scope.conversationId,
+      scope.agentId,
+      async () => {
+        const ownedRunId =
+          runId ??
+          this.localConversations.currentRunId(
+            scope.conversationId,
+            scope.agentId,
+          );
+        const ownedRun = ownedRunId ? this.runs.get(ownedRunId) : undefined;
+        if (ownedRun) {
+          this.cancelOwnedRun(ownedRun);
+        } else {
+          this.store.settleInterruptedToolCalls(conversationIdOrAgentId);
+        }
+        return { status: "cancelled" } as never;
+      },
+    );
   }
 
   async cancelRun(...args: Parameters<Backend["cancelRun"]>) {
     const [agentId, runId] = args;
     const run = this.runs.get(runId);
-    if (!run || run.agent_id !== agentId || isTerminalRun(run)) {
+    if (!run || run.agent_id !== agentId) {
       return { [runId]: "failed" } as never;
     }
 
@@ -429,10 +378,28 @@ export class HeadlessBackend implements Backend {
 
   private async cancelRunById(runId: string) {
     const run = this.runs.get(runId);
-    if (!run || isTerminalRun(run)) {
+    if (!run || (isTerminalRun(run) && !this.ownsToolRun(run))) {
       return { [runId]: "failed" } as never;
     }
+    return this.localConversations.cancel(
+      run.conversation_id ?? "default",
+      run.agent_id,
+      async () => this.cancelOwnedRun(run),
+    );
+  }
 
+  private ownsToolRun(run: Run): boolean {
+    return (
+      run.stop_reason === "requires_approval" &&
+      this.localConversations.currentRunId(
+        run.conversation_id ?? "default",
+        run.agent_id,
+      ) === run.id
+    );
+  }
+
+  private cancelOwnedRun(run: Run) {
+    const runId = run.id;
     if (run.conversation_id) {
       this.store.settleInterruptedToolCalls(run.conversation_id, {
         agentId: run.agent_id,
@@ -441,7 +408,7 @@ export class HeadlessBackend implements Backend {
       this.store.settleInterruptedToolCalls(run.agent_id);
     }
     const controller = this.runControllerByRunId.get(runId);
-    // Captured before completeRun clears it, as in cancelConversation.
+    // Capture startup preemption before completeRun clears it.
     const preemptStartup = this.runStartupPreemptByRunId.get(runId);
     this.recordRunChunk(runId, {
       message_type: "stop_reason",
@@ -464,10 +431,14 @@ export class HeadlessBackend implements Backend {
           conversationId,
           this.store.resolveAgentIdForConversation(conversationId),
         ),
+      ) ??
+      this.localConversations.currentRunId(
+        conversationId,
+        this.store.resolveAgentIdForConversation(conversationId),
       );
     if (!runId) return {} as never;
     const run = this.runs.get(runId);
-    if (!run || run.conversation_id !== conversationId || isTerminalRun(run)) {
+    if (!run || run.conversation_id !== conversationId) {
       return { [runId]: "failed" } as never;
     }
     return this.cancelRunById(runId);
@@ -512,9 +483,37 @@ export class HeadlessBackend implements Backend {
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
     options?: { signal?: AbortSignal },
   ) {
-    // Honor a pre-aborted turn signal before persisting input or starting a
-    // run: a cancel that landed during pre-stream prep found no run to stop,
-    // so this send must not leave an orphaned active run behind.
+    const agentId =
+      body?.agent_id ??
+      this.store.resolveAgentIdForConversation(conversationId);
+    return this.localConversations.execute(
+      conversationId,
+      agentId,
+      body,
+      (input, signal, onInputPersisted) =>
+        this.executeOwnedConversationTurn(
+          conversationId,
+          input,
+          { signal },
+          onInputPersisted,
+        ),
+      () =>
+        this.store
+          .listLocalMessages(conversationId, agentId)
+          .flatMap((message) =>
+            message.role === "user" && message.otid ? [message.otid] : [],
+          ),
+      options?.signal,
+    );
+  }
+
+  private async executeOwnedConversationTurn(
+    conversationId: string,
+    body: ConversationMessageCreateBody | ConversationMessageStreamBody,
+    options: { signal: AbortSignal },
+    onInputPersisted: () => Promise<void>,
+  ) {
+    // Reject pre-stream cancellation before persisting input or starting a run.
     if (options?.signal?.aborted) {
       throw new APIUserAbortError();
     }
@@ -530,15 +529,8 @@ export class HeadlessBackend implements Backend {
         `Conversation ${conversationId} already has an active run (${activeRun.id})`,
       );
     }
-    // Settle any tool calls left without results from a prior interrupted turn.
-    // If the process was killed or the stream errored out before cancelConversation
-    // was called, orphaned tool_use blocks remain in the history. Anthropic rejects
-    // any subsequent turn that includes them, so we add synthetic error results here
-    // before assembling the context for the new turn.
-    //
-    // Skip when the incoming turn is an approval — that means the previous turn
-    // ended with requires_approval and the tool call is intentionally pending,
-    // waiting for the user's approval response in this very turn.
+    // Admission holds the cross-process lease, so only a dead owner's calls can be orphaned.
+    // Approval continuations preserve the tools the current harness is still executing.
     const messages = (body as { messages?: unknown[] }).messages ?? [];
     const isApprovalTurn = messages.some(
       (m) => (m as { type?: string }).type === "approval",
@@ -550,6 +542,10 @@ export class HeadlessBackend implements Backend {
     }
 
     const turnInput = this.store.appendTurnInput(conversationId, body);
+    await onInputPersisted();
+    if (options.signal.aborted) {
+      throw new APIUserAbortError();
+    }
     const run = this.startRun(
       turnInput.conversationId,
       turnInput.agentId,
@@ -564,8 +560,7 @@ export class HeadlessBackend implements Backend {
     const startupPreempted = new Promise<never>((_, reject) => {
       preemptStartup = () => reject(new APIUserAbortError());
     });
-    // The preemption promise intentionally rejects and is only raced, so an
-    // abort after startup finished must never surface as unhandled.
+    // A late abort must not surface as an unhandled rejection.
     startupPreempted.catch(() => {});
     this.runStartupPreemptByRunId.set(run.id, preemptStartup);
     const preemptOnSignal = () => preemptStartup();
@@ -731,6 +726,7 @@ export class HeadlessBackend implements Backend {
       },
     } as Run;
     this.runs.set(run.id, run);
+    this.localConversations.recordRun(conversationId, agentId, run.id);
     this.activeRunByConversation.set(
       localConversationKey(conversationId, agentId),
       run.id,
@@ -745,7 +741,12 @@ export class HeadlessBackend implements Backend {
   ): void {
     const run = this.runs.get(runId);
     if (!run) return;
-    if (isTerminalRun(run)) return;
+    if (
+      isTerminalRun(run) &&
+      !(stopReason === "cancelled" && this.ownsToolRun(run))
+    ) {
+      return;
+    }
     const completedAt = timestampForRun(this.runSeq + this.runs.size);
     const status =
       stopReason === "error" || stopReason === "llm_api_error"
@@ -863,6 +864,13 @@ export class HeadlessBackend implements Backend {
   ): Stream<LettaStreamingResponse> {
     const store = this.store;
     const backend = this;
+    stream.controller.signal.addEventListener(
+      "abort",
+      () => {
+        backend.cancelUnobservedRun(runId);
+      },
+      { once: true },
+    );
     return {
       controller: stream.controller,
       async *[Symbol.asyncIterator]() {
@@ -871,6 +879,9 @@ export class HeadlessBackend implements Backend {
         let pendingErrorInfo: RunErrorMetadata | undefined;
         try {
           for await (const rawChunk of stream) {
+            if (stream.controller.signal.aborted) {
+              throw new APIUserAbortError();
+            }
             const chunk = attachRunId(rawChunk, runId);
             if (chunk.message_type === "approval_request_message") {
               sawApprovalRequest = true;
@@ -937,6 +948,10 @@ export class HeadlessBackend implements Backend {
         } catch (error) {
           backend.failRun(runId, error);
           throw error;
+        } finally {
+          if (!sawStopReason) {
+            backend.cancelUnobservedRun(runId);
+          }
         }
       },
     } as unknown as Stream<LettaStreamingResponse>;

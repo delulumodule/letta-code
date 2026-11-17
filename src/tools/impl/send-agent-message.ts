@@ -65,6 +65,7 @@ interface SendAgentMessageArgs {
 interface SendAgentMessageDeps {
   backend?: Pick<
     Backend,
+    | "localConversations"
     | "capabilities"
     | "retrieveConversation"
     | "createConversation"
@@ -102,7 +103,7 @@ function spawnDetached(command: string, args: string[]): void {
   const child = spawn(command, args, {
     cwd: getCurrentWorkingDirectory(),
     env: getRuntimeExecutionEnv(
-      process.env,
+      { ...process.env, LETTA_LOCAL_SEND: "1" },
       getRuntimeContext()?.executionSettings,
     ),
     detached: true,
@@ -551,6 +552,30 @@ export async function send_agent_message(
     signal.throwIfAborted();
     submissionAttempted = true;
     if (!backend.capabilities.environmentRouting) {
+      const agentId =
+        destination.agentId ??
+        (await backend.retrieveConversation(destination.conversationId))
+          .agent_id;
+      if (!agentId) {
+        throw new Error("Local message destination has no agent");
+      }
+      const content = buildAgentSendReminder(sender, true) + args.message;
+      if (
+        await backend.localConversations?.enqueue(
+          destination.conversationId,
+          agentId,
+          content,
+          clientMessageId,
+        )
+      ) {
+        return {
+          content: JSON.stringify({
+            status: "queued",
+            conversation_id: destination.conversationId,
+          }),
+          status: "success",
+        };
+      }
       const launcher = resolveSubagentLauncher(
         buildLocalSendArgs(
           destination,

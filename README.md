@@ -61,6 +61,8 @@ letta --new-agent --personality tutorial
 
 Letta Cloud is the default. On first launch, choose to sign in with Letta or proceed locally; your choice is saved for future runs. Run `letta setup` to choose again, or `letta backend cloud` / `letta backend local` to change the default. Use `--backend cloud` or `--backend local` for a one-off override without changing the saved default.
 
+The local backend allows one owner per conversation across CLI processes sharing the same local store. Ownership lasts through tool execution and approval continuations. `SendAgentMessage` queues updates to a busy owner in a durable inbox; the owner receives them after tool results or before completing its turn. Separate agents' default conversations remain independent. A live owner is never displaced just because a turn takes a long time. After a process crash, the next owner recovers orphaned tool calls and queued updates. Cancellation or provider failure leaves undelivered updates queued for the next successful turn.
+
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, Z.ai coding plan, etc.), and use `/model` to swap models.
 
 ## Letta Cloud

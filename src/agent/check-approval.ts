@@ -520,6 +520,10 @@ export async function getResumeDataFromBackend(
   conversationId?: string,
   options: GetResumeDataOptions = {},
 ): Promise<ResumeData> {
+  await getBackend().localConversations?.assertAvailable(
+    conversationId ?? "default",
+    agent.id,
+  );
   try {
     const includeMessageHistory = options.includeMessageHistory ?? true;
     const shouldFetchTail = includeMessageHistory && isBackfillEnabled();

@@ -1497,7 +1497,13 @@ export async function handleHeadlessCommand(
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
 
-  // Set conversation ID in context for tools (e.g., Skill tool) to access
+  if (process.env.LETTA_LOCAL_SEND === "1") {
+    await backend.localConversations?.wait(
+      conversationId,
+      agent.id,
+      createSigintAbortSignal(),
+    );
+  }
   setConversationId(conversationId);
 
   // Only foreground agent sessions belong in the project/global LRU.
@@ -1664,7 +1670,6 @@ export async function handleHeadlessCommand(
     return await flushAndExit(code);
   };
 
-  // Output init event for stream-json format
   if (outputFormat === "stream-json") {
     const initEvent: SystemInitMessage = {
       type: "system",
@@ -1692,13 +1697,11 @@ export async function handleHeadlessCommand(
   const sharedReminderState = createSharedReminderState();
   let queuedRecoveredApprovalResults: ApprovalResult[] | null = null;
 
-  // Helper to resolve any pending approvals before sending user input
   const resolveAllPendingApprovals = async (
     mode: "queue_for_next_turn" | "send_immediately" = "send_immediately",
   ) => {
     const { getResumeDataFromBackend } = await import("@/agent/check-approval");
     while (true) {
-      // Detached conversations have no server-side agent to retrieve.
       const freshAgent = isDetached
         ? agent
         : await backend.retrieveAgent(agent.id);
@@ -1717,7 +1720,6 @@ export async function handleHeadlessCommand(
         throw error;
       }
 
-      // Use plural field for parallel tool calls
       const pendingApprovals = resume.pendingApprovals || [];
       if (pendingApprovals.length === 0) break;
 
@@ -1734,7 +1736,6 @@ export async function handleHeadlessCommand(
         break;
       }
 
-      // Send all results in one batch
       const approvalInput: ApprovalCreate = {
         type: "approval",
         approvals: denialResults,
@@ -1763,7 +1764,6 @@ export async function handleHeadlessCommand(
         }
       }
 
-      // Send the approval to clear the pending state; drain the stream without output
       const approvalStream = await sendScopedApprovalMessages({
         agentId: agent.id,
         conversationId,

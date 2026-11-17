@@ -194,6 +194,21 @@ export interface AgentSecret {
 
 export interface Backend {
   readonly capabilities: BackendCapabilities;
+  /** Cross-process LOCAL conversation admission; absent on remote backends. */
+  readonly localConversations?: {
+    enqueue(
+      conversationId: string,
+      agentId: string,
+      content: string,
+      otid: string,
+    ): Promise<boolean>;
+    assertAvailable(conversationId: string, agentId: string): Promise<void>;
+    wait(
+      conversationId: string,
+      agentId: string,
+      signal?: AbortSignal,
+    ): Promise<void>;
+  };
 
   retrieveAgent(
     agentId: string,

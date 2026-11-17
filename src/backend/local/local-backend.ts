@@ -399,10 +399,13 @@ export class LocalBackend extends HeadlessBackend {
       typeof bodyRecord.agent_id === "string" && bodyRecord.agent_id.length > 0
         ? bodyRecord.agent_id
         : this.store.resolveAgentIdForConversation(conversationId);
-    const compiled = await this.compileAndMaybePersistSystemPrompt(
+    const compiled = await this.localConversations.mutate(
       conversationId,
       agentId,
-      { dryRun: bodyRecord.dry_run === true },
+      () =>
+        this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
+          dryRun: bodyRecord.dry_run === true,
+        }),
     );
     return compiled.content;
   }
@@ -416,11 +419,11 @@ export class LocalBackend extends HeadlessBackend {
       typeof bodyRecord.agent_id === "string" && bodyRecord.agent_id.length > 0
         ? bodyRecord.agent_id
         : this.store.resolveAgentIdForConversation(conversationId);
-    const result = await this.compactLocalConversation(
+    const result = await this.localConversations.mutate(
       conversationId,
       agentId,
-      "manual",
-      body,
+      () =>
+        this.compactLocalConversation(conversationId, agentId, "manual", body),
     );
     return {
       num_messages_before: result.numMessagesBefore,

@@ -3191,7 +3191,7 @@ export class LocalStore {
     return this.refreshConversationRecordFromStorage(key);
   }
 
-  private toolSettlementTargets(
+  toolSettlementTargets(
     conversationIdOrAgentId: string,
     agentId?: string,
   ): Array<{ conversationId: string; agentId: string }> {
