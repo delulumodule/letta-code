@@ -147,6 +147,8 @@ export interface ChannelReplyContext {
   senderId?: string;
   senderName?: string;
   text?: string;
+  /** True when the text contains the quoted excerpt. */
+  isQuote?: boolean;
   userMentions?: ChannelUserMention[];
 }
 

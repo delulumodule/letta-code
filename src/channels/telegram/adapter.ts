@@ -112,6 +112,7 @@ export function createTelegramAdapter(
       shouldDebounce: ({ inbound }) =>
         inbound.chatType === "channel" &&
         !inbound.attachments?.length &&
+        !inbound.replyContext?.isQuote &&
         !inbound.reaction,
       onFlush: async (entries) => {
         const last = entries[entries.length - 1];

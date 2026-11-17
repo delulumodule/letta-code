@@ -65,6 +65,38 @@ describe("public Telegram ingress primitives", () => {
     });
   });
 
+  test("prefers a selected plain quote to the replied message's full text", () => {
+    expect(
+      getTelegramReplyContext(
+        makeMessage({
+          quote: { text: "selected", position: 6, is_manual: true },
+          reply_to_message: makeMessage({
+            message_id: 9,
+            text: "first selected last",
+          }),
+        }),
+      ),
+    ).toMatchObject({ messageId: "9", text: "selected", isQuote: true });
+  });
+
+  test("keeps a selected rich quote when Telegram omits the reply target", () => {
+    expect(
+      getTelegramReplyContext(
+        makeMessage({
+          quote: {
+            text: "",
+            rich_texts: [
+              { type: "custom_emoji", alternative_text: "⭐" },
+              { type: "mathematical_expression", expression: "x^2" },
+            ],
+            position: 0,
+            is_manual: true,
+          },
+        }),
+      ),
+    ).toEqual({ text: "⭐\nx^2", isQuote: true });
+  });
+
   test("diffs reaction updates into added/removed events", () => {
     expect(
       diffTelegramReactionUpdate({

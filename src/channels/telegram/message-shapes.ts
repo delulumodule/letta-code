@@ -26,6 +26,12 @@ export type TelegramLikeMessage = {
     length?: number;
   }>;
   reply_to_message?: TelegramLikeMessage;
+  quote?: {
+    text: string;
+    rich_texts?: unknown[];
+    position?: number;
+    is_manual?: boolean;
+  };
   chat: {
     id: number | string;
     type?: string;

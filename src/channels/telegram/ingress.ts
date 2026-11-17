@@ -8,6 +8,7 @@
  */
 
 import type { ChannelReplyContext } from "@/channels/types";
+import { isRecord } from "@/utils/type-guards";
 import {
   extractTelegramMessageText,
   getTelegramSenderName,
@@ -123,14 +124,16 @@ export function getTelegramMessageThreadId(
 export function getTelegramReplyContext(
   message: TelegramLikeMessage,
 ): ChannelReplyContext | undefined {
+  const quote = getTelegramQuoteText(message.quote);
   const replied = message.reply_to_message;
   if (!replied) {
-    return undefined;
+    return quote ? { text: quote, isQuote: true } : undefined;
   }
 
-  const text = extractTelegramMessageText(replied).trim();
+  const text = quote || extractTelegramMessageText(replied).trim();
   const context: ChannelReplyContext = {
     messageId: String(replied.message_id),
+    ...(quote ? { isQuote: true } : {}),
   };
   if (replied.from?.id !== undefined) {
     context.senderId = String(replied.from.id);
@@ -143,6 +146,44 @@ export function getTelegramReplyContext(
     context.text = text;
   }
   return context;
+}
+
+function getTelegramQuoteText(quote: TelegramLikeMessage["quote"]): string {
+  if (!quote) {
+    return "";
+  }
+
+  // Each top-level rich text is a separately quoted part, such as a table cell.
+  const richText = Array.isArray(quote.rich_texts)
+    ? quote.rich_texts.map(flattenTelegramRichText).join("\n").trim()
+    : "";
+  return richText || (typeof quote.text === "string" ? quote.text.trim() : "");
+}
+
+function flattenTelegramRichText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(flattenTelegramRichText).join("");
+  }
+  if (!isRecord(value)) {
+    return "";
+  }
+
+  if (
+    value.type === "custom_emoji" &&
+    typeof value.alternative_text === "string"
+  ) {
+    return value.alternative_text;
+  }
+  if (
+    value.type === "mathematical_expression" &&
+    typeof value.expression === "string"
+  ) {
+    return value.expression;
+  }
+  return flattenTelegramRichText(value.text);
 }
 
 export function getTelegramReactionToken(

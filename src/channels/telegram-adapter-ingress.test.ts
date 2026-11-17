@@ -1,5 +1,6 @@
 import { expect, mock, test } from "bun:test";
 import type { InboundChannelMessage } from "@/channels/types";
+import { buildChannelNotificationXml } from "@/channels/xml";
 import {
   createTelegramAdapter,
   detectTelegramBotMention,
@@ -182,6 +183,62 @@ test("telegram adapter forwards reply context for quoted messages", async () => 
     }),
   );
 });
+
+test.each([
+  { id: 123, type: "private" },
+  { id: -100123, type: "supergroup" },
+])(
+  "Telegram delivers a selected rich quote immediately in a $type chat",
+  async (chat) => {
+    const adapter = createTelegramAdapter({
+      ...telegramAccountDefaults,
+      channel: "telegram",
+      token: "test-token",
+      enabled: true,
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      inboundDebounceMs: 100,
+    });
+    const notifications: string[] = [];
+    adapter.onMessage = async (message) => {
+      notifications.push(buildChannelNotificationXml(message));
+    };
+    await adapter.start();
+
+    await FakeBot.instances[0]?.emit("message", {
+      message: {
+        chat,
+        from: { id: 456, username: "alice" },
+        text: "Is it available?",
+        date: 1_736_380_800,
+        message_id: 78,
+        quote: {
+          text: "",
+          rich_texts: [
+            ["Compact charger — ", { type: "bold", text: "29 €" }],
+            "USB-C & 6 mm",
+          ],
+          position: 48,
+          is_manual: true,
+        },
+        reply_to_message: {
+          chat,
+          from: { id: 12345, username: "test_bot" },
+          date: 1_736_380_790,
+          message_id: 77,
+          rich_message: { blocks: [] },
+        },
+      },
+    });
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toContain(
+      '<reply-context message_id="77" sender_id="12345" sender_name="test_bot" quoted="true">\n' +
+        "Compact charger — 29 €\nUSB-C &amp; 6 mm\n</reply-context>",
+    );
+    expect(notifications[0]).toContain("Is it available?");
+  },
+);
 
 test("detectTelegramBotMention preserves non-leading mentions", () => {
   expect(

@@ -253,6 +253,9 @@ function buildReplyContextXml(msg: InboundChannelMessage): string | null {
   if (replyContext.senderName) {
     attrs.push(`sender_name="${escapeXmlAttribute(replyContext.senderName)}"`);
   }
+  if (replyContext.isQuote) {
+    attrs.push('quoted="true"');
+  }
 
   const attrString = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
   if (replyContext.text?.trim()) {
