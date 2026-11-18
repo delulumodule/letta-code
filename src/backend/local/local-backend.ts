@@ -126,19 +126,6 @@ export interface LocalBackendModEventHooks {
   onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
 
-function formatMidConversationMemoryUpdate(
-  compiled: LocalCompiledSystemPrompt,
-): string {
-  return [
-    "<memory_update>",
-    `The local memory filesystem has been edited and committed at revision ${compiled.memfsRevision ?? "unknown"}.`,
-    "This updates part of your persona/system memory. Treat the following freshly rendered memory context as authoritative from now on; where it conflicts with earlier memory context, this newer memory context wins.",
-    "",
-    compiled.coreMemory.trimEnd(),
-    "</memory_update>",
-  ].join("\n");
-}
-
 export class LocalBackend extends HeadlessBackend {
   override readonly capabilities: BackendCapabilities = {
     ...HEADLESS_BACKEND_CAPABILITIES,
@@ -439,7 +426,7 @@ export class LocalBackend extends HeadlessBackend {
     body: ConversationMessageCreateBody | ConversationMessageStreamBody;
     history: StoredMessage[];
     uiMessages: LocalMessage[];
-  }): Promise<{ systemPrompt: string; midConversationSystemPrompt?: string }> {
+  }): Promise<{ systemPrompt: string }> {
     if (this.store.isAgentFreeConversation(input.conversationId)) {
       const clientSkills = Array.isArray(
         (input.body as Record<string, unknown>).client_skills,
@@ -465,9 +452,6 @@ export class LocalBackend extends HeadlessBackend {
       : [];
     return {
       systemPrompt: appendAvailableSkillsBlock(persisted.content, clientSkills),
-      ...(persisted.midConversationSystemPrompt
-        ? { midConversationSystemPrompt: persisted.midConversationSystemPrompt }
-        : {}),
     };
   }
 
@@ -838,34 +822,12 @@ export class LocalBackend extends HeadlessBackend {
       ? getCommittedMemfsRevision(this.memoryDirForAgent(agentId))
       : undefined;
     if (
-      existing?.rawSystemHash === rawSystemHash &&
+      existing?.version === 2 &&
+      existing.rawSystemHash === rawSystemHash &&
       existing.memfsRevision === memfsRevision
     ) {
       return existing;
     }
-    if (
-      existing?.rawSystemHash === rawSystemHash &&
-      existing.memfsRevision !== memfsRevision
-    ) {
-      const compiled = await this.compileAndMaybePersistSystemPrompt(
-        conversationId,
-        agentId,
-        { dryRun: true },
-      );
-      if (compiled.memfsRevision !== existing.memfsRevision) {
-        const midConversationSystemPrompt =
-          formatMidConversationMemoryUpdate(compiled);
-        this.store.setCompiledSystemPrompt(conversationId, agentId, {
-          ...existing,
-          compiledAt: compiled.compiledAt,
-          coreMemory: compiled.coreMemory,
-          memfsRevision: compiled.memfsRevision,
-        });
-        return { ...existing, midConversationSystemPrompt };
-      }
-      return existing;
-    }
-
     return this.compileAndMaybePersistSystemPrompt(conversationId, agentId, {
       dryRun: false,
     });

@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
 import {
   appendFile,
   mkdir,
@@ -670,63 +669,6 @@ describe("local backend pi transcript", () => {
       partialAssistantId,
     );
     expect(reloaded.retrieveMessage(partialAssistantId ?? "")).toEqual([]);
-  });
-
-  test("sends committed memory changes through a transcript update", async () => {
-    const storageDir = await mkdtemp(join(tmpdir(), "local-backend-cache-"));
-    const systemPrompts: string[] = [];
-    const midConversationPrompts: Array<string | undefined> = [];
-    const executor: HeadlessTurnExecutor = {
-      async execute(input) {
-        systemPrompts.push(input.systemPrompt ?? "");
-        midConversationPrompts.push(input.midConversationSystemPrompt);
-        return lettaStreamFromChunks([
-          {
-            message_type: "assistant_message",
-            content: [{ type: "text", text: "ok" }],
-          } as LettaStreamingResponse,
-          {
-            message_type: "stop_reason",
-            stop_reason: "end_turn",
-          } as LettaStreamingResponse,
-        ]);
-      },
-    };
-    const backend = new LocalBackend({
-      storageDir,
-      executor,
-    });
-    const agent = await backend.createAgent({
-      name: "Local",
-      system: "base {CORE_MEMORY}",
-    } as never);
-    const conversation = await backend.createConversation({
-      agent_id: agent.id,
-    } as never);
-    const memoryDir = join(storageDir, "memfs", agent.id, "memory");
-    await writeFile(
-      join(memoryDir, "persona.md"),
-      '---\nname: "Persona"\ndescription: "Who the agent is"\n---\nChanged but not explicitly recompiled.\n',
-      "utf8",
-    );
-    execFileSync("git", ["add", "persona.md"], { cwd: memoryDir });
-    execFileSync("git", ["commit", "-m", "test memory change"], {
-      cwd: memoryDir,
-    });
-    await drain(
-      await backend.createConversationMessageStream(conversation.id, {
-        agent_id: agent.id,
-        messages: [{ role: "user", content: "first" }],
-      } as ConversationMessageCreateBody),
-    );
-
-    expect(systemPrompts).toHaveLength(1);
-    expect(systemPrompts[0]).not.toContain(
-      "Changed but not explicitly recompiled.",
-    );
-    expect(midConversationPrompts[0]).toContain(
-      "Changed but not explicitly recompiled.",
-    );
   });
 
   test("recompiles cached system prompt after local compaction", async () => {

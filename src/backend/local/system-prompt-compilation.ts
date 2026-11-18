@@ -23,7 +23,8 @@ interface LocalMemoryFile {
 export interface LocalCompiledSystemPrompt {
   content: string;
   coreMemory: string;
-  midConversationSystemPrompt?: string;
+  /** Earlier snapshots could record a MemFS revision without updating its prompt content. */
+  version?: 2;
   compiledAt: string;
   rawSystemHash: string;
   memfsRevision?: string;
@@ -456,6 +457,7 @@ export function compileLocalSystemPrompt(
     .filter((part) => part.trim().length > 0)
     .join("\n\n");
   return {
+    version: 2,
     content: injectCoreMemory(options.agent.system, coreMemory),
     coreMemory,
     compiledAt: compiledAt.toISOString(),
