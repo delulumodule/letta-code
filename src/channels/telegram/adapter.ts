@@ -236,11 +236,12 @@ export function createTelegramAdapter(
       telegramBot.botInfo?.first_name,
     );
     const text = mention.text;
+    const replied = primaryMessage.reply_to_message;
     const attachments = await resolveTelegramInboundAttachments({
       accountId: config.accountId,
       token: config.token,
       bot: telegramBot,
-      messages,
+      messages: replied ? [...messages, replied] : messages,
       transcribeVoice: config.transcribeVoice,
     });
 

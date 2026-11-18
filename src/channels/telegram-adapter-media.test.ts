@@ -1,6 +1,9 @@
 import { expect, mock, test } from "bun:test";
+import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { setTelegramGroupTrigger } from "@/channels/telegram/group-trigger";
 import type { InboundChannelMessage } from "@/channels/types";
+import { formatChannelNotification } from "@/channels/xml";
 import {
   consoleWarnSpy,
   createTelegramAdapter,
@@ -105,6 +108,84 @@ test("telegram adapter batches media groups and downloads inbound images", async
   } finally {
     resetTelegramChannelRoot();
   }
+});
+
+test("telegram adapter includes the photo when a reply triggers the agent", async () => {
+  const photo = Buffer.from("original-photo");
+  globalThis.fetch = mock(
+    async () =>
+      new Response(photo, {
+        headers: { "content-type": "image/jpeg" },
+      }),
+  ) as unknown as typeof fetch;
+
+  const accountId = telegramAccountDefaults.accountId;
+  setTelegramGroupTrigger(
+    { accountId },
+    { mode: "pattern", pattern: "test_bot" },
+  );
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    inboundDebounceMs: 0,
+  });
+  const onMessage = mock(async (message: InboundChannelMessage) =>
+    formatChannelNotification(message),
+  );
+  adapter.onMessage = async (message) => {
+    await onMessage(message);
+  };
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  assert(bot);
+  const original = {
+    chat: { id: -100123, type: "supergroup" },
+    message_thread_id: 42,
+    from: { id: 456, first_name: "Alice" },
+    date: 1_736_380_800,
+    message_id: 10,
+    caption: "The original photo",
+    photo: [{ file_id: "photo1", file_unique_id: "unique-1" }],
+  };
+  await bot.emit("message", { message: original });
+  expect(onMessage).not.toHaveBeenCalled();
+  expect(bot.api.getFile).not.toHaveBeenCalled();
+
+  await bot.emit("message", {
+    message: {
+      chat: original.chat,
+      message_thread_id: original.message_thread_id,
+      from: { id: 789, first_name: "Bob" },
+      date: 1_736_380_801,
+      message_id: 11,
+      text: "@test_bot What do you see?",
+      entities: [{ type: "mention", offset: 0, length: 9 }],
+      reply_to_message: original,
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledTimes(1);
+  expect(onMessage.mock.calls[0]?.[0]).toMatchObject({
+    messageId: "11",
+    threadId: "42",
+    replyContext: { messageId: "10", text: "The original photo" },
+  });
+  expect(bot.api.getFile).toHaveBeenCalledTimes(1);
+  expect(bot.api.getFile).toHaveBeenCalledWith("photo1");
+  expect(await onMessage.mock.results[0]?.value).toContainEqual({
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: "image/jpeg",
+      data: photo.toString("base64"),
+    },
+  });
+  await adapter.stop();
 });
 
 test("telegram adapter preserves photo mime type when Telegram download responds with octet-stream", async () => {
